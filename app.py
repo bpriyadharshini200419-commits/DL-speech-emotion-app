@@ -19,21 +19,22 @@ from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 
 SR = 16000
 MAX_SECONDS = 20
-# Wav2Vec2-XLSR (multilingual pre-training) fine-tuned for 8 emotions.
-# Replace with your own fine-tuned folder/hub id after running train.py.
-EMOTION_MODEL = os.environ.get(
-    "EMOTION_MODEL", "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
-)
-EMOJI = {"angry": "😠", "calm": "😌", "fearful": "😨",
-         "happy": "😄", "neutral": "😐", "sad": "😢", "surprised": "😲"}
+MODELS = {
+    "Natural speech (4 emotions) - recommended": "superb/wav2vec2-base-superb-er",
+    "Acted speech (7 emotions)": "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition",
+}
+LABEL_MAP = {"neu": "neutral", "hap": "happy", "ang": "angry", "sad": "sad",
+             "fear": "fearful", "surprise": "surprised"}
+EMOJI = {"angry": "😠", "calm": "😌", "fearful": "😨", "happy": "😄",
+         "neutral": "😐", "sad": "😢", "surprised": "😲"}
 
 st.set_page_config(page_title="Speech Emotion Recognition", page_icon="🎙️", layout="wide")
 
 
 @st.cache_resource(show_spinner="Loading emotion model...")
-def load_emotion_model():
-    fe = AutoFeatureExtractor.from_pretrained(EMOTION_MODEL)
-    model = AutoModelForAudioClassification.from_pretrained(EMOTION_MODEL).eval()
+def load_emotion_model(model_id):
+    fe = AutoFeatureExtractor.from_pretrained(model_id)
+    model = AutoModelForAudioClassification.from_pretrained(model_id).eval()
     return fe, model
 
 
@@ -51,12 +52,13 @@ def load_audio(path):
     return y / (np.max(np.abs(y)) + 1e-9)               # normalise
 
 
-def predict_emotion(y):
-    fe, model = load_emotion_model()
+def predict_emotion(y, model_id):
+    fe, model = load_emotion_model(model_id)
     inputs = fe(y, sampling_rate=SR, return_tensors="pt", padding=True)
     with torch.no_grad():
         probs = torch.softmax(model(**inputs).logits, dim=-1)[0].numpy()
-    labels = [model.config.id2label[i].lower() for i in range(len(probs))]
+    labels = [LABEL_MAP.get(model.config.id2label[i].lower(), model.config.id2label[i].lower())
+              for i in range(len(probs))]
     series = pd.Series(probs, index=labels)
     series = series.drop(labels=["disgust"], errors="ignore")   # exclude disgust
     series = series / series.sum()                              # renormalise to 100%
@@ -99,6 +101,8 @@ st.caption("Tamil + English speech → emotion (Wav2Vec2) + transcript (Whisper)
 
 with st.sidebar:
     st.header("Settings")
+    model_choice = st.selectbox("Emotion model", list(MODELS))
+    MODEL_ID = MODELS[model_choice]
     whisper_size = st.selectbox("Whisper model", ["tiny", "base", "small"], index=1)
     lang_choice = st.selectbox("Speech language", ["Tamil", "English", "Auto detect"])
     LANG_CODE = {"Auto detect": None, "Tamil": "ta", "English": "en"}[lang_choice]
@@ -129,7 +133,7 @@ if audio_file is not None:
             st.error("Audio too short or silent. Please try again.")
         else:
             with st.spinner("Analysing..."):
-                probs = predict_emotion(y)
+                probs = predict_emotion(y, MODEL_ID)
                 text, lang, lang_p = transcribe(y, whisper_size, LANG_CODE)
 
             top = probs.index[0]
@@ -137,6 +141,9 @@ if audio_file is not None:
             c1.metric("Predicted emotion", f"{EMOJI.get(top, '')} {top.title()}")
             c2.metric("Confidence", f"{probs.iloc[0]*100:.1f}%")
             c3.metric("Detected language", f"{ {'ta': 'Tamil', 'en': 'English'}.get(lang, lang)} ({lang_p*100:.0f}%)")
+
+            if probs.iloc[0] < 0.5:
+                st.info("Low confidence: the emotion is mixed or unclear. Try a longer, more expressive clip.")
 
             left, right = st.columns(2)
             with left:
