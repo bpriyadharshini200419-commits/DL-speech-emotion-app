@@ -2,6 +2,8 @@ streamlit>=1.39
 torch
 transformers>=4.40
 faster-whisper>=1.0
+SpeechRecognition
+audioop-lts; python_version >= "3.13"
 librosa>=0.10
 soundfile
 numpy
