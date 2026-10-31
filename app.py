@@ -18,7 +18,7 @@ MAX_SECONDS = 20
 EMOTION_MODEL = os.environ.get(
     "EMOTION_MODEL", "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
 )
-EMOJI = {"angry": "😠", "calm": "😌", "disgust": "🤢", "fearful": "😨",
+EMOJI = {"angry": "😠", "calm": "😌", "fearful": "😨",
          "happy": "😄", "neutral": "😐", "sad": "😢", "surprised": "😲"}
 
 st.set_page_config(page_title="Speech Emotion Recognition", page_icon="🎙️", layout="wide")
@@ -51,11 +51,15 @@ def predict_emotion(y):
     with torch.no_grad():
         probs = torch.softmax(model(**inputs).logits, dim=-1)[0].numpy()
     labels = [model.config.id2label[i].lower() for i in range(len(probs))]
-    return pd.Series(probs, index=labels).sort_values(ascending=False)
+    series = pd.Series(probs, index=labels)
+    series = series.drop(labels=["disgust"], errors="ignore")   # exclude disgust
+    series = series / series.sum()                              # renormalise to 100%
+    return series.sort_values(ascending=False)
 
 
-def transcribe(y, size):
-    segments, info = load_whisper(size).transcribe(y.astype(np.float32), beam_size=1)
+def transcribe(y, size, language=None):
+    segments, info = load_whisper(size).transcribe(
+        y.astype(np.float32), beam_size=5, language=language, task="transcribe")
     return " ".join(s.text.strip() for s in segments), info.language, info.language_probability
 
 
@@ -66,6 +70,8 @@ st.caption("Tamil + English speech → emotion (Wav2Vec2) + transcript (Whisper)
 with st.sidebar:
     st.header("Settings")
     whisper_size = st.selectbox("Whisper model", ["tiny", "base", "small"], index=1)
+    lang_choice = st.selectbox("Speech language", ["Auto detect", "Tamil", "English"])
+    LANG_CODE = {"Auto detect": None, "Tamil": "ta", "English": "en"}[lang_choice]
     st.markdown("**Tips**: speak 3–15 s, quiet room, one speaker.")
     st.markdown("Emotions: " + ", ".join(EMOJI))
 
@@ -94,7 +100,7 @@ if audio_file is not None:
         else:
             with st.spinner("Analysing..."):
                 probs = predict_emotion(y)
-                text, lang, lang_p = transcribe(y, whisper_size)
+                text, lang, lang_p = transcribe(y, whisper_size, LANG_CODE)
 
             top = probs.index[0]
             c1, c2, c3 = st.columns(3)
@@ -117,7 +123,11 @@ if audio_file is not None:
                 ax2.set_xlabel("Time (s)")
                 st.pyplot(fig2)
 
-            st.subheader("Transcript")
-            st.write(text or "_No speech detected_")
+            st.subheader("📝 Transcript (what you said)")
+            if text:
+                st.success(text)
+                st.text_area("Copy text", text, height=120)
+            else:
+                st.warning("No speech detected")
 else:
     st.info("Record or upload a Tamil/English voice clip to begin.")
