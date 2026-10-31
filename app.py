@@ -7,10 +7,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import soundfile as sf
-import speech_recognition as sr
 import streamlit as st
 import torch
 from faster_whisper import WhisperModel
+
+try:
+    import speech_recognition as sr
+except Exception:      # app still works with Whisper only
+    sr = None
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 
 SR = 16000
@@ -61,6 +65,8 @@ def predict_emotion(y):
 
 def google_transcribe(y, language):
     """Google speech recognition - much better for Tamil than small Whisper models."""
+    if sr is None:
+        return ""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
         wav_path = f.name
     sf.write(wav_path, y, SR, subtype="PCM_16")
