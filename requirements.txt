@@ -1,0 +1,11 @@
+streamlit>=1.39
+torch
+transformers>=4.40
+faster-whisper>=1.0
+librosa>=0.10
+soundfile
+numpy
+pandas
+matplotlib
+scikit-learn
+datasets
