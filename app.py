@@ -1,7 +1,28 @@
+Claude
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+App · PY
 """Bilingual (Tamil / English) Speech Emotion Recognition - Streamlit app."""
 import os
 import tempfile
-
+ 
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,13 +31,13 @@ import soundfile as sf
 import streamlit as st
 import torch
 from faster_whisper import WhisperModel
-
+ 
 try:
     import speech_recognition as sr
 except Exception:      # app still works with Whisper only
     sr = None
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
-
+ 
 SR = 16000
 MAX_SECONDS = 20
 MODELS = {
@@ -27,22 +48,22 @@ LABEL_MAP = {"neu": "neutral", "hap": "happy", "ang": "angry", "sad": "sad",
              "fear": "fearful", "surprise": "surprised"}
 EMOJI = {"angry": "😠", "calm": "😌", "fearful": "😨", "happy": "😄",
          "neutral": "😐", "sad": "😢", "surprised": "😲"}
-
+ 
 st.set_page_config(page_title="Speech Emotion Recognition", page_icon="🎙️", layout="wide")
-
-
+ 
+ 
 @st.cache_resource(show_spinner="Loading emotion model...")
 def load_emotion_model(model_id):
     fe = AutoFeatureExtractor.from_pretrained(model_id)
     model = AutoModelForAudioClassification.from_pretrained(model_id).eval()
     return fe, model
-
-
+ 
+ 
 @st.cache_resource(show_spinner="Loading Whisper...")
 def load_whisper(size: str):
     return WhisperModel(size, device="cpu", compute_type="int8")
-
-
+ 
+ 
 def load_audio(path):
     y, _ = librosa.load(path, sr=SR, mono=True)
     y, _ = librosa.effects.trim(y, top_db=30)          # remove silence
@@ -50,8 +71,8 @@ def load_audio(path):
     if len(y) < SR // 2:
         return None
     return y / (np.max(np.abs(y)) + 1e-9)               # normalise
-
-
+ 
+ 
 def predict_emotion(y, model_id):
     fe, model = load_emotion_model(model_id)
     inputs = fe(y, sampling_rate=SR, return_tensors="pt", padding=True)
@@ -63,8 +84,8 @@ def predict_emotion(y, model_id):
     series = series.drop(labels=["disgust"], errors="ignore")   # exclude disgust
     series = series / series.sum()                              # renormalise to 100%
     return series.sort_values(ascending=False)
-
-
+ 
+ 
 def google_transcribe(y, language):
     """Google speech recognition - much better for Tamil than small Whisper models."""
     if sr is None:
@@ -81,8 +102,8 @@ def google_transcribe(y, language):
         return ""
     finally:
         os.unlink(wav_path)
-
-
+ 
+ 
 def transcribe(y, size, language=None):
     """Returns (text, language_code, confidence). Google first, Whisper as backup."""
     segments, info = load_whisper(size).transcribe(
@@ -91,14 +112,15 @@ def transcribe(y, size, language=None):
     whisper_text = " ".join(s.text.strip() for s in segments)
     lang = language or info.language
     g_lang = {"ta": "ta-IN", "en": "en-IN"}.get(lang, "en-IN")
-    text = google_transcribe(y, g_lang) or whisper_text
-    return text, lang, (1.0 if language else info.language_probability)
-
-
+    g_text = google_transcribe(y, g_lang)
+    engine = "Google Speech" if g_text else "Whisper"
+    return (g_text or whisper_text), lang, (1.0 if language else info.language_probability), engine
+ 
+ 
 # ---------------- UI ----------------
 st.title("🎙️ Bilingual Speech Emotion Recognition")
 st.caption("Tamil + English speech → emotion (Wav2Vec2) + transcript (Whisper)")
-
+ 
 with st.sidebar:
     st.header("Settings")
     model_choice = st.selectbox("Emotion model", list(MODELS))
@@ -106,9 +128,11 @@ with st.sidebar:
     whisper_size = st.selectbox("Whisper model", ["tiny", "base", "small"], index=1)
     lang_choice = st.selectbox("Speech language", ["Tamil", "English", "Auto detect"])
     LANG_CODE = {"Auto detect": None, "Tamil": "ta", "English": "en"}[lang_choice]
+    if sr is None:
+        st.warning("Google speech engine not installed - using Whisper only (weaker for Tamil).")
     st.markdown("**Tips**: speak 3–15 s, quiet room, one speaker.")
     st.markdown("Emotions: " + ", ".join(EMOJI))
-
+ 
 tab_rec, tab_up = st.tabs(["🎤 Record", "📁 Upload"])
 audio_file = None
 with tab_rec:
@@ -119,14 +143,14 @@ with tab_up:
     up = st.file_uploader("Upload audio", type=["wav", "mp3", "m4a", "ogg", "flac"])
     if up:
         audio_file = up
-
+ 
 if audio_file is not None:
     st.audio(audio_file)
     suffix = os.path.splitext(getattr(audio_file, "name", "rec.wav"))[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(audio_file.getvalue())
         path = tmp.name
-
+ 
     if st.button("Analyse", type="primary"):
         y = load_audio(path)
         if y is None:
@@ -134,17 +158,30 @@ if audio_file is not None:
         else:
             with st.spinner("Analysing..."):
                 probs = predict_emotion(y, MODEL_ID)
-                text, lang, lang_p = transcribe(y, whisper_size, LANG_CODE)
-
+                text, lang, lang_p, engine = transcribe(y, whisper_size, LANG_CODE)
+ 
+            st.subheader("📝 Transcript - what you said")
+            if text:
+                st.markdown(
+                    f"<div style='font-size:1.4rem;line-height:1.7;padding:16px 20px;"
+                    f"border-radius:10px;border:1px solid #4C78A8'>{text}</div>",
+                    unsafe_allow_html=True)
+                st.caption(f"Recognised by: {engine}  |  Language: "
+                           f"{ {'ta': 'Tamil', 'en': 'English'}.get(lang, lang)}")
+                st.text_area("Copy text", text, height=100)
+            else:
+                st.warning("No speech detected. Speak clearly for 3-15 seconds, close to the mic.")
+            st.divider()
+ 
             top = probs.index[0]
             c1, c2, c3 = st.columns(3)
             c1.metric("Predicted emotion", f"{EMOJI.get(top, '')} {top.title()}")
             c2.metric("Confidence", f"{probs.iloc[0]*100:.1f}%")
             c3.metric("Detected language", f"{ {'ta': 'Tamil', 'en': 'English'}.get(lang, lang)} ({lang_p*100:.0f}%)")
-
+ 
             if probs.iloc[0] < 0.5:
                 st.info("Low confidence: the emotion is mixed or unclear. Try a longer, more expressive clip.")
-
+ 
             left, right = st.columns(2)
             with left:
                 st.subheader("Emotion probabilities")
@@ -159,12 +196,7 @@ if audio_file is not None:
                 ax2.plot(np.arange(len(y)) / SR, y, lw=0.5)
                 ax2.set_xlabel("Time (s)")
                 st.pyplot(fig2)
-
-            st.subheader("📝 Transcript (what you said)")
-            if text:
-                st.success(text)
-                st.text_area("Copy text", text, height=120)
-            else:
-                st.warning("No speech detected")
 else:
     st.info("Record or upload a Tamil/English voice clip to begin.")
+ 
+Claude finished the response
