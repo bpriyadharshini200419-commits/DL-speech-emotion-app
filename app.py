@@ -6,6 +6,8 @@ import librosa
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import soundfile as sf
+import speech_recognition as sr
 import streamlit as st
 import torch
 from faster_whisper import WhisperModel
@@ -57,10 +59,32 @@ def predict_emotion(y):
     return series.sort_values(ascending=False)
 
 
+def google_transcribe(y, language):
+    """Google speech recognition - much better for Tamil than small Whisper models."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+        wav_path = f.name
+    sf.write(wav_path, y, SR, subtype="PCM_16")
+    try:
+        r = sr.Recognizer()
+        with sr.AudioFile(wav_path) as src:
+            audio = r.record(src)
+        return r.recognize_google(audio, language=language)
+    except Exception:
+        return ""
+    finally:
+        os.unlink(wav_path)
+
+
 def transcribe(y, size, language=None):
+    """Returns (text, language_code, confidence). Google first, Whisper as backup."""
     segments, info = load_whisper(size).transcribe(
-        y.astype(np.float32), beam_size=5, language=language, task="transcribe")
-    return " ".join(s.text.strip() for s in segments), info.language, info.language_probability
+        y.astype(np.float32), beam_size=5, language=language, task="transcribe",
+        vad_filter=True, condition_on_previous_text=False)
+    whisper_text = " ".join(s.text.strip() for s in segments)
+    lang = language or info.language
+    g_lang = {"ta": "ta-IN", "en": "en-IN"}.get(lang, "en-IN")
+    text = google_transcribe(y, g_lang) or whisper_text
+    return text, lang, (1.0 if language else info.language_probability)
 
 
 # ---------------- UI ----------------
@@ -70,7 +94,7 @@ st.caption("Tamil + English speech → emotion (Wav2Vec2) + transcript (Whisper)
 with st.sidebar:
     st.header("Settings")
     whisper_size = st.selectbox("Whisper model", ["tiny", "base", "small"], index=1)
-    lang_choice = st.selectbox("Speech language", ["Auto detect", "Tamil", "English"])
+    lang_choice = st.selectbox("Speech language", ["Tamil", "English", "Auto detect"])
     LANG_CODE = {"Auto detect": None, "Tamil": "ta", "English": "en"}[lang_choice]
     st.markdown("**Tips**: speak 3–15 s, quiet room, one speaker.")
     st.markdown("Emotions: " + ", ".join(EMOJI))
