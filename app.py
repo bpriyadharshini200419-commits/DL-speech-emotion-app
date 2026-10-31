@@ -54,8 +54,8 @@ def predict_emotion(y):
     return pd.Series(probs, index=labels).sort_values(ascending=False)
 
 
-def transcribe(path, size):
-    segments, info = load_whisper(size).transcribe(path, beam_size=1)
+def transcribe(y, size):
+    segments, info = load_whisper(size).transcribe(y.astype(np.float32), beam_size=1)
     return " ".join(s.text.strip() for s in segments), info.language, info.language_probability
 
 
@@ -94,7 +94,7 @@ if audio_file is not None:
         else:
             with st.spinner("Analysing..."):
                 probs = predict_emotion(y)
-                text, lang, lang_p = transcribe(path, whisper_size)
+                text, lang, lang_p = transcribe(y, whisper_size)
 
             top = probs.index[0]
             c1, c2, c3 = st.columns(3)
